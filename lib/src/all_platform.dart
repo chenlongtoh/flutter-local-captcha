@@ -90,6 +90,9 @@ class LocalCaptcha extends StatefulWidget {
   /// Value of captcha when it's generated.
   final Function(String)? onCaptchaGenerated;
 
+  /// Return unique captcha if set to true
+  final bool enableUniqueChar;
+
   const LocalCaptcha({
     super.key,
     required this.controller,
@@ -104,6 +107,7 @@ class LocalCaptcha extends StatefulWidget {
     this.caseSensitive = false,
     this.codeExpireAfter = const Duration(minutes: 10),
     this.onCaptchaGenerated,
+    this.enableUniqueChar = true,
   })  : assert(length > 0),
         assert(height <= width);
 
@@ -125,16 +129,29 @@ class _LocalCaptchaState extends State<LocalCaptcha> {
   var _lastRefreshAt = DateTime.fromMillisecondsSinceEpoch(0);
   var _randomText = '';
 
-  void _generateRandomText() {
+  String _generateRandomToken() {
     final random = Random();
     final charList = widget.chars.runes.toList(growable: false);
 
+    final int index = random.nextInt(charList.length);
+    final String character = String.fromCharCode(charList[index]);
+
+    return character;
+  }
+
+  void _generateRandomText() {
     _randomText = '';
 
     for (var i = 0; i < widget.length; i++) {
-      final index = random.nextInt(charList.length);
+      String character = _generateRandomToken();
 
-      _randomText += String.fromCharCode(charList[index]);
+      if (widget.enableUniqueChar) {
+        while (_randomText.contains(character)) {
+          character = _generateRandomToken();
+        }
+      }
+
+      _randomText += character;
     }
 
     widget.onCaptchaGenerated?.call(_randomText);
@@ -145,9 +162,7 @@ class _LocalCaptchaState extends State<LocalCaptcha> {
     super.initState();
 
     widget.controller.setOnValidateFn((code) {
-      if (DateTime.now()
-          .subtract(widget.codeExpireAfter)
-          .isAfter(_lastRefreshAt)) {
+      if (DateTime.now().subtract(widget.codeExpireAfter).isAfter(_lastRefreshAt)) {
         return LocalCaptchaValidation.codeExpired;
       }
 
@@ -189,7 +204,7 @@ class _LocalCaptchaState extends State<LocalCaptcha> {
             width: widget.width,
             backgroundColor: widget.backgroundColor,
             textColors: widget.textColors ?? _defaultColors,
-            noiseColors: widget.noiseColors ?? _defaultColors,
+            noiseColors: widget.noiseColors,
             fontSize: widget.fontSize,
           ),
         );
@@ -204,7 +219,7 @@ class _CacheableCaptchaLayers extends StatefulWidget {
   final double width;
   final Color backgroundColor;
   final List<Color> textColors;
-  final List<Color> noiseColors;
+  final List<Color>? noiseColors;
   final double? fontSize;
 
   const _CacheableCaptchaLayers({
@@ -214,13 +229,12 @@ class _CacheableCaptchaLayers extends StatefulWidget {
     required this.width,
     required this.backgroundColor,
     required this.textColors,
-    required this.noiseColors,
+    this.noiseColors,
     this.fontSize,
   });
 
   @override
-  State<_CacheableCaptchaLayers> createState() =>
-      _CacheableCaptchaLayersState();
+  State<_CacheableCaptchaLayers> createState() => _CacheableCaptchaLayersState();
 }
 
 class _CacheableCaptchaLayersState extends State<_CacheableCaptchaLayers> {
@@ -235,14 +249,12 @@ class _CacheableCaptchaLayersState extends State<_CacheableCaptchaLayers> {
 
     WidgetsBinding.instance.addPostFrameCallback((timeStamp) {
       Future.microtask(() async {
-        final boundary = _captchaBoundaryGlobalKey.currentContext
-            ?.findRenderObject() as RenderRepaintBoundary?;
+        final boundary = _captchaBoundaryGlobalKey.currentContext?.findRenderObject() as RenderRepaintBoundary?;
 
         if (boundary != null) {
           final boundaryImage = await boundary.toImage(pixelRatio: 1.0);
 
-          _captchaImageByteDataVN.value =
-              await boundaryImage.toByteData(format: ui.ImageByteFormat.png);
+          _captchaImageByteDataVN.value = await boundaryImage.toByteData(format: ui.ImageByteFormat.png);
 
           if (mounted) {
             setState(() {
@@ -277,11 +289,11 @@ class _CacheableCaptchaLayersState extends State<_CacheableCaptchaLayers> {
                     width: widget.width,
                     colors: widget.textColors,
                   ),
-                if (!_isCaptchaReady)
+                if (!_isCaptchaReady && (widget.noiseColors?.isNotEmpty ?? false))
                   _CaptchaNoiseLayer(
                     height: widget.height,
                     width: widget.width,
-                    colors: widget.noiseColors,
+                    colors: widget.noiseColors!,
                   ),
               ],
             ),
@@ -334,9 +346,7 @@ class _CaptchaTextLayer extends StatelessWidget {
       alignment: Alignment.center,
       child: Row(
         mainAxisSize: MainAxisSize.min,
-        children: textList
-            .map((e) => _char(String.fromCharCode(e)))
-            .toList(growable: false),
+        children: textList.map((e) => _char(String.fromCharCode(e))).toList(growable: false),
       ),
     );
   }
@@ -346,8 +356,7 @@ class _CaptchaTextLayer extends StatelessWidget {
 
     final transform3dPerspective = Matrix4.identity()
       ..setEntry(3, 2, 0.01)
-      ..rotateX(
-          ((random.nextInt(1) + 2) * 0.1) * (random.nextInt(10) >= 5 ? 1 : -1));
+      ..rotateX(((random.nextInt(1) + 2) * 0.1) * (random.nextInt(10) >= 5 ? 1 : -1));
 
     var mFontSize = 0.0;
 
@@ -360,8 +369,7 @@ class _CaptchaTextLayer extends StatelessWidget {
       final fontSizeWithTextLength = (autoFontSize * text.length);
 
       if (autoFontSize * text.length > width) {
-        final overflow =
-            (fontSizeWithTextLength - width) / fontSizeWithTextLength * 100;
+        final overflow = (fontSizeWithTextLength - width) / fontSizeWithTextLength * 100;
 
         autoFontSize = height * (fontScale - (fontScale * overflow / 100));
         autoFontSize /= 0.8;
@@ -374,26 +382,17 @@ class _CaptchaTextLayer extends StatelessWidget {
       transform: transform3dPerspective,
       alignment: FractionalOffset.center,
       child: Transform.rotate(
-        angle: ((random.nextInt(25) + 5) * pi / 180) *
-            (random.nextInt(10) >= 5 ? 1 : -1),
-        child: Transform.translate(
-          offset: Offset(
-            random.nextInt(10) * (random.nextInt(10) >= 5 ? 1 : -1),
-            random.nextInt(10) * (random.nextInt(10) >= 5 ? 1 : -1),
-          ),
-          child: Transform(
-            transform: Matrix4.skewX((random.nextInt(3) + 1) * 0.1),
-            child: Transform.scale(
-              scale: ((random.nextInt(3) + 7) * 0.1),
-              child: Text(
-                char,
-                style: TextStyle(
-                  color: colors[random.nextInt(colors.length)],
-                  fontSize: mFontSize,
-                  fontWeight: (random.nextInt(10) >= 5
-                      ? FontWeight.normal
-                      : FontWeight.bold),
-                ),
+        angle: ((random.nextInt(25) + 5) * pi / 180) * (random.nextInt(10) >= 5 ? 1 : -1),
+        child: Transform(
+          transform: Matrix4.skewX((random.nextInt(3) + 1) * 0.1),
+          child: Transform.scale(
+            scale: ((random.nextInt(3) + 7) * 0.1),
+            child: Text(
+              char,
+              style: TextStyle(
+                color: colors[random.nextInt(colors.length)],
+                fontSize: mFontSize,
+                fontWeight: (random.nextInt(10) >= 5 ? FontWeight.normal : FontWeight.bold),
               ),
             ),
           ),
